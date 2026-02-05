@@ -55,19 +55,9 @@ _FILTER_OP_MAP = {
 }
 
 
-def _parent_reference_chain_to_root(
-    schema: dlt.Schema, table: str
-) -> list[TTableReferenceStandalone]:
-    chain: list[TTableReferenceStandalone] = []
-    while parent := schema.tables[table].get("parent"):
-        chain.append(schema_utils.create_parent_child_reference(schema.tables, table))
-        table = parent
-    return chain
-
-
 def _resolve_parent_reference_chain(
     schema: dlt.Schema, left: str, right: str
-) -> list[tuple[TTableReferenceStandalone, str]]:
+) -> list[tuple[TTableReference, str]]:
     """Resolve the reference chain between two tables.
 
     References always point child -> parent (child has foreign key to parent).
@@ -80,18 +70,18 @@ def _resolve_parent_reference_chain(
         - "RIGHT" when left is child and right is parent (natural ref direction)
         - "LEFT" when left is parent and right is child (opposite ref direction)
     """
-    upward_chain_from_left = _parent_reference_chain_to_root(schema, left)
-    upward_chain_from_right = _parent_reference_chain_to_root(schema, right)
+    upward_chain_from_left = schema_utils.get_all_parent_references_to_root(schema.tables, left)
+    upward_chain_from_right = schema_utils.get_all_parent_references_to_root(schema.tables, right)
 
     for idx, left_ref in enumerate(upward_chain_from_left):
-        if not "referenced_table" in left_ref:
+        if "referenced_table" not in left_ref:
             break
         if left_ref["referenced_table"] == right:
             # right is a parent of left: natural direction (for references), use RIGHT JOIN
             return [(ref, "RIGHT") for ref in upward_chain_from_left[: idx + 1]]
 
     for idx, right_ref in enumerate(upward_chain_from_right):
-        if not "referenced_table" in right_ref:
+        if "referenced_table" not in right_ref:
             break
         if right_ref["referenced_table"] == left:
             # left is a parent of right: reverse chain, use LEFT JOIN
@@ -103,7 +93,7 @@ def _resolve_parent_reference_chain(
 
 def _resolve_reference_chain(
     schema: dlt.Schema, left: str, right: str
-) -> list[tuple[TTableReferenceStandalone, str]]:
+) -> list[tuple[TTableReference, str]]:
     """Resolve references between two tables and determine join type per reference.
 
     Returns:
@@ -117,10 +107,10 @@ def _resolve_reference_chain(
     for ref in schema.references:
         if ref.get("table") == left and ref.get("referenced_table") == right:
             # Natural direction: left (child) -> right (parent), use RIGHT JOIN
-            return [(ref, "RIGHT")]
+            return [(TTableReference(**ref), "RIGHT")]
         if ref.get("table") == right and ref.get("referenced_table") == left:
             # Opposite direction: left (parent) <- right (child), use LEFT JOIN
-            return [(ref, "LEFT")]
+            return [(TTableReference(**ref), "LEFT")]
 
     # Fall back to parent-child reference chain
     return _resolve_parent_reference_chain(schema, left, right)
@@ -264,7 +254,9 @@ class Relation(WithSqlClient):
         # Track the original base table for chained join validation
         self._origin_table_name: Optional[str] = table_name
         # necessary to allow for chained joins while keeping correct cardinality
-        self._joined_table_aliases: Optional[dict[str, str]] = {table_name: "t0"} if table_name else None
+        self._joined_table_aliases: Optional[dict[str, str]] = (
+            {table_name: "t0"} if table_name else None
+        )
         self._next_join_alias_index: Optional[int] = 1 if table_name else None
 
         self._opened_sql_client: SqlClientBase[Any] = None
@@ -556,7 +548,9 @@ class Relation(WithSqlClient):
 
         refs_with_types = _resolve_reference_chain(schema, self._origin_table_name, other_table)
         joined_tables = (
-            self._joined_table_aliases.copy() if self._joined_table_aliases else {self._origin_table_name: "t0"}
+            self._joined_table_aliases.copy()
+            if self._joined_table_aliases
+            else {self._origin_table_name: "t0"}
         )
         next_alias_index = (
             self._next_join_alias_index
@@ -865,7 +859,9 @@ class Relation(WithSqlClient):
     def __copy__(self) -> Self:
         rel = self.__class__(dataset=self._dataset, query=self.sqlglot_expression)
         rel._origin_table_name = self._origin_table_name
-        rel._joined_table_aliases = self._joined_table_aliases.copy() if self._joined_table_aliases else None
+        rel._joined_table_aliases = (
+            self._joined_table_aliases.copy() if self._joined_table_aliases else None
+        )
         rel._next_join_alias_index = self._next_join_alias_index
         return rel
 
