@@ -120,32 +120,20 @@ def _build_join_condition(
     ref: TTableReferenceStandalone,
     left_alias: str = "l",
     right_alias: str = "r",
-    swap_columns: bool = False,
+    is_parent_on_left: bool = False,
 ) -> sge.Expression:
-    """Build the ON condition for a join.
-
-    Args:
-        ref: The table reference defining the relationship
-        left_alias: Alias for the left table
-        right_alias: Alias for the right table
-        swap_columns: If True, swap which side uses columns vs referenced_columns.
-                     Used for LEFT joins where parent is on left but ref points child->parent.
-    """
+    """Build join ON condition."""
     conditions: list[sge.Expression] = []
 
     # Determine which columns go on which side
-    if swap_columns:
-        # For parent->child joins: left table gets referenced_columns (parent key),
-        # right table gets columns (child foreign key)
+    if is_parent_on_left:
         left_cols = ref["referenced_columns"]
         right_cols = ref["columns"]
     else:
-        # For child->parent joins: left table gets columns (child foreign key),
-        # right table gets referenced_columns (parent key)
         left_cols = ref["columns"]
         right_cols = ref["referenced_columns"]
 
-    for left_col, right_col in zip(left_cols, right_cols):
+    for left_col, right_col in zip(left_cols, right_cols, strict=True):
         condition = sge.EQ(
             this=sge.Column(
                 this=sge.to_identifier(left_col, quoted=True),
@@ -200,7 +188,8 @@ def _build_join(
                 ref,
                 left_alias=left_alias,
                 right_alias=right_alias,
-                swap_columns=is_left_join,
+                # left join means parent -> child join
+                is_parent_on_left=is_left_join,
             )
         )
         joins.append(join)
